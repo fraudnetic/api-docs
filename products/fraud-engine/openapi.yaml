@@ -1,0 +1,694 @@
+openapi: 3.1.0
+info:
+  title: Fraudnetic Fraud Engine Collector API
+  version: 2.0.0
+  summary: Partner ingest API for Fraudnetic Fraud Engine (Collector)
+  description: |
+    Partner-facing Collector API for events, customers, transactions, and optional
+    bonus/action definitions. Requests are authenticated with Timestamp + Hash signing.
+
+    Copyright © 2025–2026 Fraudnetic, Inc. All rights reserved.
+    See repository LEGAL.md for copyright notice and use license.
+
+    Dashboard Rules management is internal and is not documented in this partner spec.
+  contact:
+    name: Fraudnetic
+    url: https://fraudnetic.com
+  license:
+    name: Fraudnetic Partner Use License
+    identifier: LicenseRef-Fraudnetic-Partner
+externalDocs:
+  description: Partner integration guide and legal notice
+  url: ./guide.md
+servers:
+  - url: "{COLLECTOR_BASE_URL}"
+    description: Collector service base URL (paths include /v2)
+    variables:
+      COLLECTOR_BASE_URL:
+        default: https://collector.example.fraudnetic.com
+tags:
+  - name: Health
+  - name: Events
+  - name: Customers
+  - name: Transactions
+  - name: Optional
+paths:
+  /v2/health:
+    get:
+      tags: [Health]
+      operationId: collectorHealth
+      summary: Health check
+      description: |
+        Returns service health information. Response shape is
+        `{ "status": <IPInfo object|null> }` (not a simple liveness string).
+      security: []
+      responses:
+        "200":
+          description: Health payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: object
+                    nullable: true
+                    additionalProperties: true
+                    description: Resolved IP info used by the health probe
+        "500":
+          description: Health probe failure
+
+  /v2/event:
+    post:
+      tags: [Events]
+      operationId: ingestEvent
+      summary: Ingest a collector event
+      description: |
+        Requires headers `Timestamp` and `Hash`.
+
+        Hash = base64(sha256(compact_json_payload + PRIV + PUB + Timestamp))
+
+        Missing required event fields typically return HTTP 401.
+        Invalid hash returns HTTP 401. Some event names are accepted
+        (`data_processing: true`) but not queued for scoring.
+      security:
+        - CollectorHash: []
+      parameters:
+        - $ref: "#/components/parameters/TimestampHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventRequest"
+            examples:
+              registration:
+                $ref: "#/components/examples/EventRegistration"
+      responses:
+        "200":
+          description: Accepted or business rejection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorResponse"
+              examples:
+                success:
+                  value:
+                    data_processing: true
+                    error_message: ""
+                duplicate:
+                  value:
+                    data_processing: false
+                    error_message: Duplicate event
+        "400":
+          $ref: "#/components/responses/CollectorError"
+        "401":
+          description: Invalid hash or missing required event fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorErrorBody"
+        "500":
+          $ref: "#/components/responses/CollectorError"
+
+  /v2/customer:
+    post:
+      tags: [Customers]
+      operationId: ingestCustomer
+      summary: Upsert a customer profile
+      security:
+        - CollectorHash: []
+      parameters:
+        - $ref: "#/components/parameters/TimestampHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerRequest"
+            examples:
+              customer:
+                $ref: "#/components/examples/CustomerExample"
+      responses:
+        "200":
+          description: Accepted or business rejection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorResponse"
+        "400":
+          $ref: "#/components/responses/CollectorError"
+        "401":
+          $ref: "#/components/responses/CollectorError"
+        "500":
+          $ref: "#/components/responses/CollectorError"
+
+  /v2/transaction:
+    post:
+      tags: [Transactions]
+      operationId: ingestTransaction
+      summary: Ingest a transaction
+      security:
+        - CollectorHash: []
+      parameters:
+        - $ref: "#/components/parameters/TimestampHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransactionRequest"
+            examples:
+              deposit:
+                $ref: "#/components/examples/TransactionDeposit"
+      responses:
+        "200":
+          description: Accepted or business rejection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorResponse"
+        "400":
+          $ref: "#/components/responses/CollectorError"
+        "401":
+          $ref: "#/components/responses/CollectorError"
+        "500":
+          $ref: "#/components/responses/CollectorError"
+
+  /v2/bonus:
+    post:
+      tags: [Optional]
+      operationId: ingestBonus
+      summary: Define or update a bonus (optional)
+      security:
+        - CollectorHash: []
+      parameters:
+        - $ref: "#/components/parameters/TimestampHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BonusRequest"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorIdResponse"
+        "400":
+          $ref: "#/components/responses/CollectorError"
+        "401":
+          $ref: "#/components/responses/CollectorError"
+
+  /v2/actions:
+    post:
+      tags: [Optional]
+      operationId: ingestAction
+      summary: Define or update an action (optional)
+      security:
+        - CollectorHash: []
+      parameters:
+        - $ref: "#/components/parameters/TimestampHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionRequest"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorIdResponse"
+        "400":
+          $ref: "#/components/responses/CollectorError"
+        "401":
+          $ref: "#/components/responses/CollectorError"
+
+components:
+  securitySchemes:
+    CollectorHash:
+      type: apiKey
+      in: header
+      name: Hash
+      description: |
+        Base64 SHA-256 of `compact_json + PRIV + PUB + Timestamp`.
+        Always send matching `Timestamp` header (Unix ms recommended).
+        Content-Type is not part of the hash and is not an auth header.
+
+  parameters:
+    TimestampHeader:
+      name: Timestamp
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Unix milliseconds string recommended
+
+  responses:
+    CollectorError:
+      description: Request error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CollectorErrorBody"
+
+  examples:
+    EventRegistration:
+      summary: Registration event
+      value:
+        customer_id: "70000044001407474458"
+        affiliate_id: "1"
+        affiliate_name: test affiliate
+        btag: aff_1_campaign_44
+        event_name: registration
+        ip_address: 129.0.0.1
+        customer_agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
+        browser_fingerprint: "387417684"
+        canvas_fingerprint: "1525675574"
+        font_fingerprint: "2374965128"
+        webgl_fingerprint: "625687185"
+        device_id: "400014270648"
+        device_language: en-US
+        device_timezone: "-240"
+        screen_resolution: 1920x1080
+        browser_name: chrome
+        browser_version: "138"
+        os_name: linux
+        os_version: unknown
+        device_type: desktop
+        is_incognito: false
+        periodic_wave: "1711425230"
+        storage: 589692538060
+        session_id: 6m5dqwx9g151p1ytmkgdjb
+        cookies: true
+        device_is_rooted: false
+        other_params:
+          locations:
+            - latLng:
+                lat: 40.900799
+                lng: 8.606102
+    CustomerExample:
+      summary: Customer upsert
+      value:
+        customer_id: "33061234567"
+        affiliate_id: AFF-1001
+        username: Pierre
+        email: pierre.dupont@example.fr
+        phone_number: "+33612345678"
+        full_name: Pierre Dupont
+        document_id: "98765"
+        country: FR
+        city: Paris
+        state: Ile-de-France
+        address: 10 Rue de Rivoli, 75001 Paris
+        registration_date: "2025-03-15T10:00:00Z"
+        is_active: true
+        has_incident: false
+        kyc_verified: true
+        phone_verified: true
+        email_verified: true
+        customer_state: ACTIVE
+        risk_level: LOW
+        total_score: 950
+        amount: 3000
+        currency: EUR
+        other_params:
+          segment: vip
+    TransactionDeposit:
+      summary: Deposit transaction
+      value:
+        customer_id: "123456"
+        client_transaction_id: "132465798"
+        transaction_type: DEPOSIT
+        transaction_status: SUCCESS
+        amount: "15.10"
+        currency: EUR
+        payment_operator: TestOperator
+        type: card
+        first_time_deposit: true
+        event_name: deposit
+        ip_address: 203.0.113.10
+        customer_agent: Mozilla/5.0
+        browser_fingerprint: "387417684"
+        device_language: en-US
+        session_id: 6m5dqwx9g151p1ytmkgdjb
+
+  schemas:
+    CollectorResponse:
+      type: object
+      properties:
+        data_processing:
+          type: boolean
+        error_message:
+          type: string
+      description: |
+        Success usually includes both fields. Some accepted-but-not-queued
+        events may omit error_message. Business rejections use HTTP 200 with
+        data_processing=false.
+
+    CollectorIdResponse:
+      allOf:
+        - $ref: "#/components/schemas/CollectorResponse"
+        - type: object
+          properties:
+            id:
+              type: integer
+
+    CollectorErrorBody:
+      type: object
+      properties:
+        error_message:
+          type: string
+      description: Typical error body. Some 500 responses may also include data_processing.
+
+    EventRequest:
+      type: object
+      required:
+        - event_name
+        - customer_agent
+        - ip_address
+        - browser_fingerprint
+        - device_language
+        - customer_id
+      properties:
+        customer_id:
+          type: string
+        affiliate_id:
+          type: string
+        affiliate_name:
+          type: string
+        btag:
+          type: string
+        event_name:
+          type: string
+          enum:
+            - login
+            - logout
+            - registration
+            - accountUpdate
+            - phoneNumberVerification
+            - emailVerification
+            - documentVerification
+            - passwordReset
+            - emailChange
+            - phoneNumberChange
+            - deposit
+            - withdrawal
+            - sportBet
+            - casinoSpin
+            - gameBet
+        ip_address:
+          type: string
+        customer_agent:
+          type: string
+        browser_fingerprint:
+          type: string
+        canvas_fingerprint:
+          type: string
+        font_fingerprint:
+          type: string
+        webgl_fingerprint:
+          type: string
+        device_id:
+          type: string
+        device_timezone:
+          oneOf:
+            - type: string
+            - type: number
+        device_language:
+          type: string
+        screen_resolution:
+          type: string
+        browser_name:
+          type: string
+        browser_version:
+          type: string
+        os_name:
+          type: string
+        os_version:
+          type: string
+        device_type:
+          type: string
+        is_incognito:
+          type: boolean
+        periodic_wave:
+          type: string
+        storage:
+          oneOf:
+            - type: integer
+            - type: string
+        session_id:
+          type: string
+        session:
+          type: string
+          description: Alias for session_id
+        utm_source:
+          type: string
+        utm_medium:
+          type: string
+        utm_campaign:
+          type: string
+        utm_term:
+          type: string
+        utm_content:
+          type: string
+        cookies:
+          type: boolean
+        device_is_rooted:
+          type: boolean
+        other_params:
+          type: object
+          additionalProperties: true
+        client_transaction_id:
+          type: string
+        transaction_type:
+          type: string
+        amount:
+          oneOf:
+            - type: string
+            - type: number
+        currency:
+          type: string
+        payment_operator:
+          type: string
+        type:
+          type: string
+        first_time_deposit:
+          type: boolean
+
+    CustomerRequest:
+      type: object
+      required: [customer_id, registration_date]
+      properties:
+        customer_id:
+          type: string
+        affiliate_id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        phone_number:
+          type: string
+        full_name:
+          type: string
+        document_id:
+          type: string
+        country:
+          type: string
+        state:
+          type: string
+        city:
+          type: string
+        address:
+          type: string
+        address_hash:
+          type: string
+        registration_date:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        has_incident:
+          type: boolean
+        kyc_verified:
+          type: boolean
+        phone_verified:
+          type: boolean
+        email_verified:
+          type: boolean
+        customer_state:
+          type: string
+        risk_level:
+          type: string
+        total_score:
+          type: number
+        balance:
+          type: number
+        amount:
+          oneOf:
+            - type: number
+            - type: string
+        currency:
+          type: string
+        session_id:
+          type: string
+        session:
+          type: string
+          description: Alias for session_id
+        other_params:
+          type: object
+          additionalProperties: true
+
+    TransactionRequest:
+      type: object
+      required:
+        - customer_id
+        - client_transaction_id
+        - currency
+        - transaction_type
+        - amount
+      properties:
+        event_id:
+          type: string
+          description: Optional correlation id (not enforced as required by middleware)
+        customer_id:
+          type: string
+        client_transaction_id:
+          type: string
+        transaction_type:
+          type: string
+          description: Case-insensitive; normalized to uppercase
+          enum:
+            - DEPOSIT
+            - WITHDRAW
+            - BONUS_IN
+            - BONUS_OUT
+            - BET
+            - WIN
+            - SPORT_BET
+            - SPORT_WIN
+            - P2P_GAME_BET
+            - P2P_GAME_WIN
+            - BUY
+            - SELL
+        transaction_status:
+          type: string
+        amount:
+          oneOf:
+            - type: string
+            - type: number
+          description: Must be greater than 0
+        currency:
+          type: string
+        payment_operator:
+          type: string
+        type:
+          type: string
+        first_time_deposit:
+          type: boolean
+        affiliate_id:
+          type: string
+        affiliate_name:
+          type: string
+        btag:
+          type: string
+        event_name:
+          type: string
+        ip_address:
+          type: string
+        customer_agent:
+          type: string
+        browser_fingerprint:
+          type: string
+        canvas_fingerprint:
+          type: string
+        font_fingerprint:
+          type: string
+        webgl_fingerprint:
+          type: string
+        device_id:
+          type: string
+        device_timezone:
+          type: string
+        device_language:
+          type: string
+        screen_resolution:
+          type: string
+        browser_name:
+          type: string
+        browser_version:
+          type: string
+        os_name:
+          type: string
+        os_version:
+          type: string
+        device_type:
+          type: string
+        is_incognito:
+          type: boolean
+        periodic_wave:
+          type: string
+        storage:
+          type: integer
+        session_id:
+          type: string
+        session:
+          type: string
+          description: Alias for session_id
+        utm_source:
+          type: string
+        utm_medium:
+          type: string
+        utm_campaign:
+          type: string
+        utm_term:
+          type: string
+        utm_content:
+          type: string
+        cookies:
+          type: boolean
+        device_is_rooted:
+          type: boolean
+        other_params:
+          type: object
+          additionalProperties: true
+
+    BonusRequest:
+      type: object
+      required: [bonus_type, bonus_name, bonus_id]
+      properties:
+        bonus_type:
+          type: string
+        bonus_name:
+          type: string
+        bonus_id:
+          type: string
+        expired_at:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, draft]
+          default: draft
+
+    ActionRequest:
+      type: object
+      required: [action_type, action_name, action_id]
+      properties:
+        action_type:
+          type: string
+        action_name:
+          type: string
+        action_id:
+          type: string
+        expired_at:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, draft]
+          default: draft

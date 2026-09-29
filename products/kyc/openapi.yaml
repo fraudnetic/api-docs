@@ -1,0 +1,645 @@
+openapi: 3.1.0
+info:
+  title: Fraudnetic KYC API
+  version: 1.0.0
+  summary: Partner integration API for Fraudnetic KYC verification
+  description: |
+    Partner-facing KYC API for session creation, applicant uploads, and signed verification lookup.
+
+    Copyright © 2025–2026 Fraudnetic, Inc. All rights reserved.
+    See repository LEGAL.md for copyright notice and use license.
+  contact:
+    name: Fraudnetic
+    url: https://fraudnetic.com
+  license:
+    name: Fraudnetic Partner Use License
+    identifier: LicenseRef-Fraudnetic-Partner
+  x-logo:
+    altText: Fraudnetic
+externalDocs:
+  description: Partner integration guide and legal notice
+  url: ./guide.md
+servers:
+  - url: "{KYC_BASE_URL}"
+    description: KYC service base URL (no trailing slash; paths include /v1)
+    variables:
+      KYC_BASE_URL:
+        default: https://kyc.example.fraudnetic.com
+tags:
+  - name: Session
+    description: Create or resume KYC sessions
+  - name: Uploads
+    description: Document and face capture (session auth)
+  - name: Partner
+    description: Signed partner pull endpoints
+  - name: Status
+    description: Verification status helpers
+paths:
+  /v1/users:
+    post:
+      tags: [Session]
+      operationId: createKycSession
+      summary: Create or resume a KYC session
+      description: |
+        Creates a KYC user/session and returns a session token plus redirect URL.
+        Requires partner API key authentication.
+      security:
+        - PartnerApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSessionRequest"
+            examples:
+              standard:
+                summary: Standard partner session
+                value:
+                  returnUrl: https://partner.example.com/kyc/return
+                  language: en
+                  iframe: false
+                  verificationId: verif-000123
+                  user_data:
+                    userID: abc-1001
+                    ip: 203.0.113.10
+                    documentID: DOC-7788
+                    email: user@example.com
+                    phone: "+12025550123"
+                    sex: male
+                    username: john.doe
+                    name: John
+                    surname: Doe
+                    dateOfBirth: "1992-06-15"
+      responses:
+        "200":
+          description: Session created or resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSessionResponse"
+              examples:
+                success:
+                  value:
+                    verificationId: c17d4f8f-2f2a-4bc6-a4c5-3e94b7ca8f88
+                    userID: abc-1001
+                    status: started
+                    resumed: false
+                    resumeStep: ""
+                    redirectUrl: https://verify.example.com/?step=start&session_token=example_token
+                    session:
+                      token: "<SESSION_TOKEN>"
+                      expiresAt: "2026-05-14T10:52:08Z"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /v1/kyc/uploads/documents:
+    post:
+      tags: [Uploads]
+      operationId: uploadKycDocuments
+      summary: Upload identity documents
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadDocumentsRequest"
+      responses:
+        "200":
+          description: Upload accepted / processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadDocumentsResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /v1/kyc/uploads/face:
+    post:
+      tags: [Uploads]
+      operationId: uploadKycFace
+      summary: Upload live face capture
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadFaceRequest"
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                verificationId:
+                  type: string
+                liveFace:
+                  type: string
+                  format: binary
+                liveFaceVideo:
+                  type: string
+                  format: binary
+                captureMetadata:
+                  type: string
+      responses:
+        "200":
+          description: Face upload accepted / processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadFaceResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /v1/partner/verifications/{verificationId}/latest:
+    get:
+      tags: [Partner]
+      operationId: getPartnerVerificationLatest
+      summary: Get latest raw verification data
+      description: |
+        Returns the latest raw verification data for the verification ID.
+
+        Required headers: `X-Fraudnetic-Timestamp` + `X-Fraudnetic-Signature`.
+        Signature message: `{timestamp}.GET.{path}` where path is the request path
+        exactly as sent (for example `/v1/partner/verifications/{id}/latest`).
+        HMAC-SHA256 key is the partner API key; header value is `sha256=<hex>`.
+        `X-Partner-API-Key` is not validated on this endpoint.
+      security:
+        - PartnerHmac: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+        - $ref: "#/components/parameters/FraudneticTimestamp"
+      responses:
+        "200":
+          description: Raw verification payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationRaw"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No raw data for verification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /v1/partner/verifications/{verificationId}/webhook/latest:
+    get:
+      tags: [Partner]
+      operationId: getPartnerVerificationWebhookLatest
+      summary: Get latest webhook payload / delivery
+      description: |
+        Returns the most recently stored webhook JSON payload (or delivery log)
+        for the verification ID. Same HMAC signing as `/latest`
+        (`X-Fraudnetic-Timestamp` + `X-Fraudnetic-Signature` only).
+      security:
+        - PartnerHmac: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+        - $ref: "#/components/parameters/FraudneticTimestamp"
+      responses:
+        "200":
+          description: Webhook delivery or stored payload
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/WebhookDelivery"
+                  - $ref: "#/components/schemas/VerificationRaw"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No webhook for verification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
+  /v1/kyc/verifications/{verificationId}/status:
+    get:
+      tags: [Status]
+      operationId: getVerificationStatus
+      summary: Get verification status (session)
+      security:
+        - SessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+      responses:
+        "200":
+          description: Current status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  rejection_reasons:
+                    type: array
+                    items:
+                      type: string
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /v1/kyc/{verificationId}/check-status:
+    get:
+      tags: [Status]
+      operationId: checkVerificationStatus
+      summary: Check verification finalization
+      security:
+        - SessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+      responses:
+        "200":
+          description: Status check
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verificationId:
+                    type: string
+                  status:
+                    type: string
+                  finalized:
+                    type: boolean
+                  message:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    PartnerApiKey:
+      type: apiKey
+      in: header
+      name: X-Partner-API-Key
+      description: Shared partner API key per project
+    SessionToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        Session token returned by POST /v1/users. Send the raw token value
+        (HMAC-signed). Do not prefix with Bearer unless your deployment supports it.
+    PartnerHmac:
+      type: apiKey
+      in: header
+      name: X-Fraudnetic-Signature
+      description: |
+        HMAC signature header. Also send required X-Fraudnetic-Timestamp (unix seconds).
+        message = `{ts}.{METHOD}.{path}`; signature = `sha256=` + hex(hmac_sha256(partnerApiKey, message)).
+        X-Partner-API-Key is not validated on pull endpoints.
+
+  parameters:
+    VerificationId:
+      name: verificationId
+      in: path
+      required: true
+      schema:
+        type: string
+    FraudneticTimestamp:
+      name: X-Fraudnetic-Timestamp
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Unix timestamp in seconds (max skew 60s)
+
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+
+  schemas:
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: string
+
+    CreateSessionRequest:
+      type: object
+      required: [returnUrl, user_data]
+      properties:
+        workflowId:
+          type: string
+        returnUrl:
+          type: string
+          format: uri
+          description: Absolute URL where the user returns after verification
+        language:
+          type: string
+          example: en
+        iframe:
+          type: boolean
+          default: false
+        restrict:
+          type: boolean
+          description: Alias for iframe
+        verificationId:
+          type: string
+          description: Optional partner-supplied id for idempotent session creation
+        ignore_rules:
+          type: array
+          items:
+            type: string
+        user_data:
+          $ref: "#/components/schemas/UserData"
+
+    UserData:
+      type: object
+      required: [userID]
+      properties:
+        userID:
+          type: string
+        ip:
+          type: string
+        documentID:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        sex:
+          type: string
+          enum: [male, female]
+        username:
+          type: string
+        name:
+          type: string
+        surname:
+          type: string
+        dateOfBirth:
+          type: string
+          description: YYYY-MM-DD
+          pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+
+    CreateSessionResponse:
+      type: object
+      properties:
+        verificationId:
+          type: string
+        userID:
+          type: string
+        status:
+          type: string
+          example: started
+        resumed:
+          type: boolean
+        resumeStep:
+          type: string
+        redirectUrl:
+          type: string
+        session:
+          type: object
+          properties:
+            token:
+              type: string
+            expiresAt:
+              type: string
+              format: date-time
+
+    UploadDocumentsRequest:
+      type: object
+      required: [country, documentType]
+      description: |
+        At least one of frontDocument or backDocument is required.
+        Passport uploads may be back-only. verificationId may be omitted when
+        bound to the session token.
+      properties:
+        verificationId:
+          type: string
+          description: Optional when the session token already binds a verification
+        country:
+          type: string
+        documentType:
+          type: string
+          enum:
+            - national_id
+            - passport
+            - driving_licence
+            - residence_card
+            - health_card
+        frontDocument:
+          type: string
+          description: Base64 or data-URL image
+        backDocument:
+          type: string
+          description: Base64 or data-URL image
+
+    UploadDocumentsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        workflow_status:
+          type: string
+        rejection_reasons:
+          type: array
+          items:
+            type: string
+
+    UploadFaceRequest:
+      type: object
+      required: [liveFace]
+      description: |
+        verificationId may be omitted when bound to the session token.
+      properties:
+        verificationId:
+          type: string
+          description: Optional when the session token already binds a verification
+        liveFace:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+              minItems: 1
+              maxItems: 1
+        liveFaceVideo:
+          type: string
+        captureMetadata:
+          type: object
+          additionalProperties: true
+        capture_metadata:
+          type: object
+          additionalProperties: true
+
+    UploadFaceResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        rejection_reasons:
+          type: array
+          items:
+            type: string
+        face_match_score:
+          type: number
+        redirectUrl:
+          type: string
+
+    VerificationRaw:
+      type: object
+      description: Latest raw verification / identity payload
+      properties:
+        id:
+          type: string
+        verification_id:
+          type: string
+        status:
+          type: string
+        document_type:
+          type: string
+        country_code:
+          type: string
+        document_number:
+          type: string
+        identity_card_number:
+          type: string
+        passport_number:
+          type: ["string", "null"]
+        full_name:
+          type: string
+        given_name:
+          type: string
+        surname:
+          type: string
+        sex:
+          type: string
+        age:
+          type: integer
+        nationality:
+          type: string
+        date_of_birth:
+          type: string
+        date_of_birth_raw:
+          type: ["string", "null"]
+        date_of_birth_local:
+          type: ["string", "null"]
+        date_of_issue:
+          type: string
+        date_of_issue_raw:
+          type: ["string", "null"]
+        date_of_issue_local:
+          type: ["string", "null"]
+        date_of_expiry:
+          type: string
+        date_of_expiry_raw:
+          type: ["string", "null"]
+        date_of_expiry_local:
+          type: ["string", "null"]
+        place_of_birth:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        personal_number:
+          type: ["string", "null"]
+        phone_number:
+          type: ["string", "null"]
+        region:
+          type: ["string", "null"]
+        subcity:
+          type: ["string", "null"]
+        woreda:
+          type: ["string", "null"]
+        mrz:
+          type: object
+          properties:
+            line1:
+              type: string
+            line2:
+              type: string
+            line3:
+              type: string
+            check_digit_document:
+              type: string
+            check_digit_date_of_birth:
+              type: string
+            check_digit_date_of_expiry:
+              type: string
+            check_digit_composite:
+              type: string
+          additionalProperties: true
+        quality:
+          type: object
+          properties:
+            ocr_confidence:
+              type: number
+            image_quality_overall:
+              type: number
+            image_blur_score:
+              type: number
+            image_exposure_score:
+              type: number
+            screenshot_probability:
+              type: number
+            physical_damage_suspected:
+              type: number
+            machine_code_count:
+              type: integer
+          additionalProperties: true
+        raw_payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      additionalProperties: true
+
+    WebhookDelivery:
+      type: object
+      properties:
+        id:
+          type: string
+        verification_id:
+          type: string
+        event_type:
+          type: string
+        target_url:
+          type: string
+        attempt_number:
+          type: integer
+        request_headers:
+          type: object
+          additionalProperties: true
+        request_body:
+          type: object
+          additionalProperties: true
+        status_code:
+          type: integer
+        response_headers:
+          type: object
+          additionalProperties: true
+        response_body:
+          type: string
+        error_message:
+          type: ["string", "null"]
+        duration_ms:
+          type: integer
+        sent_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time

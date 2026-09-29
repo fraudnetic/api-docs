@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fraudnetic API Reference</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #0f172a;
+        --muted: #475569;
+        --line: #e2e8f0;
+        --bg: #f8fafc;
+        --card: #ffffff;
+        --accent: #0f766e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #ecfeff 0%, var(--bg) 40%);
+        color: var(--ink);
+      }
+      header {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 1rem;
+      }
+      header h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.75rem;
+        letter-spacing: -0.02em;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 42rem;
+      }
+      .legal {
+        margin-top: 0.75rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      .tabs {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 1.25rem 1rem;
+      }
+      .tabs button {
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--ink);
+        border-radius: 0.5rem;
+        padding: 0.55rem 0.9rem;
+        cursor: pointer;
+        font: inherit;
+      }
+      .tabs button[aria-selected="true"] {
+        border-color: var(--accent);
+        color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+      }
+      #api-reference {
+        min-height: 80vh;
+        background: var(--card);
+        border-top: 1px solid var(--line);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Fraudnetic</h1>
+      <p>
+        Partner API reference powered by Scalar. Switch between KYC and Fraud Engine
+        Collector OpenAPI specs.
+      </p>
+      <p class="legal">Copyright © 2025–2026 Fraudnetic, Inc. All rights reserved.</p>
+    </header>
+    <div class="tabs" role="tablist" aria-label="API products">
+      <button type="button" role="tab" id="tab-kyc" aria-selected="true" data-spec="products/kyc/openapi.yaml">
+        KYC API
+      </button>
+      <button type="button" role="tab" id="tab-collector" aria-selected="false" data-spec="products/fraud-engine/openapi.yaml">
+        Fraud Engine Collector
+      </button>
+    </div>
+    <div id="api-reference"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <script>
+      const host = document.getElementById("api-reference");
+      const tabs = [...document.querySelectorAll(".tabs button")];
+
+      // Resolve OpenAPI paths from the documentation site root
+      // (works for /preview/, /preview/index.html, and local file serving).
+      function specUrl(relativeFromRoot) {
+        const path = window.location.pathname.replace(/\/preview\/?$/, "/").replace(/\/preview\/index\.html$/, "/");
+        const base = path.endsWith("/") ? path : path.replace(/\/[^/]*$/, "/");
+        return new URL(relativeFromRoot, window.location.origin + base).toString();
+      }
+
+      function loadSpec(relativeFromRoot) {
+        host.innerHTML = "";
+        Scalar.createApiReference("#api-reference", {
+          url: specUrl(relativeFromRoot),
+          theme: "default",
+          hideModels: false,
+          layout: "modern",
+        });
+      }
+
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          tabs.forEach((t) => t.setAttribute("aria-selected", "false"));
+          tab.setAttribute("aria-selected", "true");
+          loadSpec(tab.dataset.spec);
+        });
+      });
+
+      loadSpec(tabs[0].dataset.spec);
+    </script>
+  </body>
+</html>
