@@ -34,7 +34,36 @@ tags:
     description: Signed partner pull endpoints
   - name: Status
     description: Verification status helpers
+  - name: Events
+    description: Session-scoped verification timeline events
+  - name: Service
+    description: Service health and readiness
 paths:
+  /v1/health:
+    get:
+      tags: [Service]
+      operationId: kycHealth
+      summary: Service health check
+      description: Unauthenticated liveness probe. Returns `{"status":"ok"}` when the service is up.
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                ok:
+                  value:
+                    status: ok
+        "503":
+          description: Service is starting up or a dependency is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorBody"
+
   /v1/users:
     post:
       tags: [Session]
@@ -58,7 +87,7 @@ paths:
                   returnUrl: https://partner.example.com/kyc/return
                   language: en
                   iframe: false
-                  verificationId: verif-000123
+                  verificationId: 6b1f0f6e-2a0e-4f8f-9f0d-2f7b6b9a1c33
                   user_data:
                     userID: abc-1001
                     ip: 203.0.113.10
@@ -95,6 +124,52 @@ paths:
           $ref: "#/components/responses/Error"
         "500":
           $ref: "#/components/responses/Error"
+
+  /v1/kyc/uploads:
+    post:
+      tags: [Uploads]
+      operationId: uploadKycFiles
+      summary: Upload documents and face in one call (legacy)
+      description: |
+        Combined upload endpoint kept for backwards compatibility. Accepts the
+        document images and the live face capture in a single request and stores
+        them without running the decision engine inline.
+
+        This endpoint uses **snake_case** field names, unlike the newer
+        `/v1/kyc/uploads/documents` and `/v1/kyc/uploads/face` endpoints.
+        New integrations should use those two instead.
+      security:
+        - SessionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadFilesRequest"
+            examples:
+              documentsAndFace:
+                summary: Front, back and one live face frame
+                value:
+                  verificationId: 6b1f0f6e-2a0e-4f8f-9f0d-2f7b6b9a1c33
+                  country: AM
+                  document_type: national_id
+                  front_document: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...
+                  back_document: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...
+                  live_face:
+                    - data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...
+      responses:
+        "200":
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadFilesResponse"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/VerificationMismatch"
 
   /v1/kyc/uploads/documents:
     post:
@@ -279,6 +354,134 @@ paths:
                     type: string
         "401":
           $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/VerificationMismatch"
+
+  /v1/kyc/verifications/{verificationId}/events:
+    get:
+      tags: [Events]
+      operationId: listVerificationEvents
+      summary: List verification timeline events
+      description: |
+        Returns the event timeline for the verification bound to the session token.
+        Used by the hosted verification UI to render progress.
+      security:
+        - SessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+      responses:
+        "200":
+          description: Event list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationEventList"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/VerificationMismatch"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Events]
+      operationId: createVerificationEvent
+      summary: Record a verification timeline event
+      description: |
+        Appends an event to the verification timeline. The hosted UI uses this to
+        report user-visible milestones (for example `opened`).
+      security:
+        - SessionToken: []
+      parameters:
+        - $ref: "#/components/parameters/VerificationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerificationEventCreateRequest"
+            examples:
+              opened:
+                summary: User opened the verification page
+                value:
+                  action: opened
+      responses:
+        "200":
+          description: Event created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationEvent"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/VerificationMismatch"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+webhooks:
+  verificationStatusChanged:
+    post:
+      tags: [Partner]
+      operationId: kycVerificationStatusChanged
+      summary: Verification status changed
+      security: []
+      description: |
+        Fraudnetic POSTs this payload to the partner webhook endpoint whenever a
+        verification reaches a new status (`approved`, `declined`, `review`, ...).
+
+        **Headers sent with every delivery**
+
+        | Header | Value |
+        |---|---|
+        | `X-Fraudnetic-Event-Type` | `kyc.verification.status_changed` |
+        | `X-Fraudnetic-Event-Id` | Unique delivery id, use it for idempotency |
+        | `X-Fraudnetic-Timestamp` | Unix seconds |
+        | `X-Fraudnetic-Signature` | `sha256=` + hex HMAC-SHA256 of the **raw body** using your webhook signing secret |
+        | `User-Agent` | `Fraudnetic-KYC-PartnerWebhook/1.0` |
+
+        Verify the signature over the raw request body before trusting the payload,
+        and reply `2xx` quickly. Non-2xx responses are retried with backoff.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerificationStatusChangedEvent"
+            examples:
+              approved:
+                summary: Verification approved
+                value:
+                  event_type: kyc.verification.status_changed
+                  event_id: 4f0a2f6a-4f0b-4f4a-9d4b-9d5a1c2f3e44
+                  created_at: "2026-09-29T10:15:30Z"
+                  verification:
+                    id: 6b1f0f6e-2a0e-4f8f-9f0d-2f7b6b9a1c33
+                    status: approved
+                    completed_at: "2026-09-29T10:15:29Z"
+                    document_type: national_id
+                    country: AM
+                  user:
+                    id: 2a1d9e8c-5b3f-4a7e-8c1d-0f9b2a3c4d5e
+                    partner_user_id: abc-1001
+                    email: user@example.com
+                  user_files:
+                    front_document: https://files.example.fraudnetic.com/...
+                    live_face: https://files.example.fraudnetic.com/...
+                  rejection_reasons: []
+                  steps:
+                    - step: front_document
+                      status: approved
+                      rejection_reasons: []
+                    - step: live_face
+                      status: approved
+                      rejection_reasons: []
+      responses:
+        "200":
+          description: Acknowledged. Any 2xx stops the retry schedule.
 
 components:
   securitySchemes:
@@ -308,8 +511,10 @@ components:
       name: verificationId
       in: path
       required: true
+      description: Verification UUID returned by `POST /v1/users`
       schema:
         type: string
+        format: uuid
     FraudneticTimestamp:
       name: X-Fraudnetic-Timestamp
       in: header
@@ -325,8 +530,281 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorBody"
+    VerificationMismatch:
+      description: |
+        The session token is bound to a different verification than the one in the path.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          examples:
+            mismatch:
+              value:
+                error: verification token does not match verificationId
+    NotFound:
+      description: Verification not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+          examples:
+            notFound:
+              value:
+                error: verification not found
 
   schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    UploadFilesRequest:
+      type: object
+      description: |
+        Legacy combined upload payload. Field names are snake_case.
+        `verificationId` may be omitted when the session token already binds one;
+        when supplied it must match the token.
+      properties:
+        verificationId:
+          type: string
+        country:
+          type: string
+          example: AM
+        document_type:
+          type: string
+          enum: [national_id, passport, driving_licence, residence_card, health_card]
+        front_document:
+          type: string
+          description: Base64 or data-URL image
+        back_document:
+          type: string
+          description: Base64 or data-URL image
+        live_face:
+          description: Exactly one frame. Accepts a bare string or a one-item array.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+              minItems: 1
+              maxItems: 1
+        live_face_video:
+          type: string
+        captureMetadata:
+          type: object
+          additionalProperties: true
+        capture_metadata:
+          type: object
+          additionalProperties: true
+
+    UploadFilesResponse:
+      type: object
+      properties:
+        verificationId:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadedFile"
+
+    UploadedFile:
+      type: object
+      properties:
+        id:
+          type: string
+        fileType:
+          type: string
+          example: front_document
+        objectKey:
+          type: string
+        mimeType:
+          type: string
+          example: image/jpeg
+        sizeBytes:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        originalName:
+          type: string
+
+    VerificationEventCreateRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          example: opened
+        actionField:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+
+    VerificationEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        verification_id:
+          type: string
+        action:
+          type: string
+        actor:
+          type: string
+        details:
+          description: Free-form event details
+          type: ["object", "null"]
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    VerificationEventList:
+      type: object
+      properties:
+        verification_id:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationEvent"
+
+    VerificationStepResult:
+      type: object
+      properties:
+        step:
+          type: string
+          example: front_document
+        status:
+          type: string
+        rejection_reasons:
+          type: array
+          items:
+            type: string
+
+    VerificationTag:
+      type: object
+      properties:
+        tag_id:
+          type: string
+        text:
+          type: string
+        tag_color:
+          type: string
+        enabled:
+          type: boolean
+
+    PartnerPersonalData:
+      type: object
+      description: Extracted identity fields. Every field is optional.
+      properties:
+        document_type: { type: string }
+        country_code: { type: string }
+        document_number: { type: string }
+        identity_card_number: { type: string }
+        passport_number: { type: string }
+        full_name: { type: string }
+        given_name: { type: string }
+        surname: { type: string }
+        sex: { type: string }
+        nationality: { type: string }
+        date_of_birth: { type: string }
+        date_of_issue: { type: string }
+        date_of_expiry: { type: string }
+        place_of_birth: { type: string }
+        address: { type: string }
+        personal_number: { type: string }
+        phone_number: { type: string }
+        region: { type: string }
+        subcity: { type: string }
+        woreda: { type: string }
+
+    VerificationStatusChangedEvent:
+      type: object
+      required: [event_type, event_id, created_at, verification, user]
+      properties:
+        event_type:
+          type: string
+          const: kyc.verification.status_changed
+        event_id:
+          type: string
+          description: Unique per delivery. Use it to deduplicate retries.
+        created_at:
+          type: string
+          format: date-time
+        change_source:
+          type: string
+        verification:
+          type: object
+          required: [id, status]
+          properties:
+            id: { type: string }
+            session_id: { type: string }
+            status:
+              type: string
+              example: approved
+            external_reference: { type: string }
+            provider_reference: { type: string }
+            completed_at: { type: string, format: date-time }
+            status_changed_at: { type: string, format: date-time }
+            status_changed_by: { type: string }
+            review_comment: { type: string }
+            admin_comment: { type: string }
+            return_url: { type: string, format: uri }
+            language: { type: string }
+            document_type: { type: string }
+            country: { type: string }
+            session_type: { type: string }
+            workflow: { type: string }
+            ip_address: { type: string }
+            ip_country_code: { type: string }
+            ip_country_name: { type: string }
+            browser_name: { type: string }
+            device_type: { type: string }
+        user:
+          type: object
+          required: [id, partner_user_id]
+          properties:
+            id: { type: string }
+            partner_user_id:
+              type: string
+              description: The `user_data.userID` you sent when creating the session
+            document_id: { type: string }
+            email: { type: string }
+            phone: { type: string }
+            ip_address: { type: string }
+            sex: { type: string }
+            source: { type: string }
+            username: { type: string }
+            name: { type: string }
+            surname: { type: string }
+            date_of_birth: { type: string }
+            status: { type: string }
+        personal_data:
+          $ref: "#/components/schemas/PartnerPersonalData"
+        verification_tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationTag"
+        user_files:
+          type: object
+          description: Map of file type to a time-limited download URL.
+          additionalProperties:
+            type: string
+        rejection_reasons:
+          type: array
+          items:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationStepResult"
+
     ErrorBody:
       type: object
       properties:
@@ -354,7 +832,10 @@ components:
           description: Alias for iframe
         verificationId:
           type: string
-          description: Optional partner-supplied id for idempotent session creation
+          format: uuid
+          description: |
+            Optional partner-supplied verification id, used to resume an existing
+            session. Must be a UUID — any other value is rejected with 400.
         ignore_rules:
           type: array
           items:

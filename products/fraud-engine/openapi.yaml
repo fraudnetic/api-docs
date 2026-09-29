@@ -28,10 +28,15 @@ servers:
         default: https://collector.example.fraudnetic.com
 tags:
   - name: Health
+    description: Liveness and readiness probes
   - name: Events
+    description: Behavioural event ingest — the main scoring entry point
   - name: Customers
+    description: Customer profile upsert
   - name: Transactions
+    description: Financial transaction ingest
   - name: Optional
+    description: Bonus and action catalogue definitions, only needed for some integrations
 paths:
   /v2/health:
     get:
@@ -51,12 +56,17 @@ paths:
                 type: object
                 properties:
                   status:
-                    type: object
-                    nullable: true
+                    type: ["object", "null"]
                     additionalProperties: true
                     description: Resolved IP info used by the health probe
+        "400":
+          $ref: "#/components/responses/CollectorError"
         "500":
           description: Health probe failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectorErrorBody"
 
   /v2/event:
     post:
@@ -376,6 +386,10 @@ components:
         - device_language
         - customer_id
       properties:
+        id:
+          type: string
+          description: |
+            Optional client-side event id. When omitted the Collector assigns one.
         customer_id:
           type: string
         affiliate_id:
@@ -385,6 +399,13 @@ components:
         btag:
           type: string
         event_name:
+          description: |
+            Only the values below are processed. Requests with any other value return
+            `{"data_processing": false, "error_message": "Event not allowed"}` with HTTP 200.
+
+            `phoneNumberVerification`, `emailVerification`, `documentVerification`,
+            `passwordReset`, `emailChange` and `phoneNumberChange` are accepted and
+            acknowledged with `data_processing: true`, but are **not** queued for scoring.
           type: string
           enum:
             - login
@@ -479,7 +500,13 @@ components:
         type:
           type: string
         first_time_deposit:
-          type: boolean
+          description: |
+            Accepted as a boolean, a string (`"true"` / `"1"`) or a number by the
+            Collector. Send a boolean for new integrations.
+          oneOf:
+            - type: boolean
+            - type: string
+            - type: number
 
     CustomerRequest:
       type: object

@@ -135,9 +135,20 @@ See [openapi.yaml](./openapi.yaml) for full schemas and examples.
 
 #### Accepted `event_name` values
 
-`login`, `registration`, `logout`, `accountUpdate`, `emailVerification`, `documentVerification`, `passwordReset`, `emailChange`, `phoneNumberChange`, `deposit`, `withdrawal`, `sportBet`, `casinoSpin`, `gameBet` (also `phoneNumberVerification` per service).
+**Scored:** `login`, `logout`, `registration`, `accountUpdate`, `deposit`,
+`withdrawal`, `sportBet`, `casinoSpin`, `gameBet`
 
-Some verification/password/email/phone change events may be accepted but not queued for scoring.
+**Accepted but not scored** — answered with `{"data_processing": true}` and
+dropped: `phoneNumberVerification`, `emailVerification`, `documentVerification`,
+`passwordReset`, `emailChange`, `phoneNumberChange`
+
+Any other value is answered with HTTP 200 and
+`{"data_processing": false, "error_message": "Event not allowed"}`, so check the
+`data_processing` flag rather than the status code.
+
+This list is pinned to the service by a contract test
+(`internal/apicontract/openapi_contract_test.go` in the Collector repository),
+so it cannot drift from the implementation unnoticed.
 
 #### Transaction required fields
 

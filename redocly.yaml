@@ -1,0 +1,23 @@
+# Lint configuration for the partner-facing OpenAPI specs.
+# Run with: npm run lint
+apis:
+  kyc:
+    root: products/kyc/openapi.yaml
+  fraud-engine:
+    root: products/fraud-engine/openapi.yaml
+
+extends:
+  - recommended
+
+rules:
+  # Health probes are unauthenticated liveness checks; they have no 4xx branch.
+  operation-4xx-response: off
+  # operationId is what the generated client libraries are named after.
+  operation-operationId: error
+  operation-operationId-unique: error
+  operation-summary: error
+  # Every partner-visible schema property should say what it is.
+  no-unresolved-refs: error
+  no-invalid-media-type-examples: error
+  security-defined: error
+  struct: error

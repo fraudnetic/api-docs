@@ -19,10 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # Never publish a document that does not validate.
+      - name: Lint OpenAPI documents
+        run: npm run lint
+      - name: Bundle OpenAPI documents
+        run: npm run bundle
       - name: Prepare site
         run: |
           mkdir -p _site
           cp -a README.md LEGAL.md products preview _site/
+          cp -a dist _site/bundled
           cat > _site/index.html <<'HTML'
           <!DOCTYPE html>
           <html lang="en">

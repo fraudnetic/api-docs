@@ -115,8 +115,79 @@ Creates or resumes a KYC session.
 
 ### Status (session)
 
-- `GET /v1/kyc/verifications/{verificationId}/status`
-- `GET /v1/kyc/{verificationId}/check-status`
+- `GET /v1/kyc/verifications/{verificationId}/status` — poll the current status and human-readable rejection reasons
+- `GET /v1/kyc/{verificationId}/check-status` — returns `finalized` once the verification reaches a terminal status
+
+Both endpoints return `403` when the session token is bound to a different
+verification than the one in the path.
+
+### Timeline events (session)
+
+- `GET /v1/kyc/verifications/{verificationId}/events` — the verification timeline
+- `POST /v1/kyc/verifications/{verificationId}/events` — append an event (the hosted UI reports `opened` this way)
+
+These are used by the hosted verification UI. Partners normally do not need them.
+
+### Service
+
+- `GET /v1/health` — unauthenticated liveness probe, returns `{"status":"ok"}`
+
+### Legacy combined upload
+
+`POST /v1/kyc/uploads` accepts documents and the face capture in one request using
+**snake_case** field names (`document_type`, `front_document`, `back_document`,
+`live_face`). It stores the files without running the decision engine inline.
+New integrations should use `/v1/kyc/uploads/documents` and `/v1/kyc/uploads/face`.
+
+## 6.1 Webhook payload
+
+Event type `kyc.verification.status_changed`:
+
+```json
+{
+  "event_type": "kyc.verification.status_changed",
+  "event_id": "4f0a2f6a-4f0b-4f4a-9d4b-9d5a1c2f3e44",
+  "created_at": "2026-09-29T10:15:30Z",
+  "verification": {
+    "id": "6b1f0f6e-2a0e-4f8f-9f0d-2f7b6b9a1c33",
+    "status": "approved",
+    "completed_at": "2026-09-29T10:15:29Z",
+    "document_type": "national_id",
+    "country": "AM"
+  },
+  "user": {
+    "id": "2a1d9e8c-5b3f-4a7e-8c1d-0f9b2a3c4d5e",
+    "partner_user_id": "abc-1001",
+    "email": "user@example.com"
+  },
+  "personal_data": { "full_name": "John Doe", "date_of_birth": "1992-06-15" },
+  "user_files": { "front_document": "https://…", "live_face": "https://…" },
+  "rejection_reasons": [],
+  "steps": [
+    { "step": "front_document", "status": "approved", "rejection_reasons": [] },
+    { "step": "live_face", "status": "approved", "rejection_reasons": [] }
+  ]
+}
+```
+
+Verifying the signature (Node.js):
+
+```js
+import crypto from "crypto";
+
+export function verifyWebhook(rawBody, signatureHeader, endpointSecret) {
+  const expected =
+    "sha256=" +
+    crypto.createHmac("sha256", endpointSecret).update(rawBody).digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(signatureHeader),
+    Buffer.from(expected),
+  );
+}
+```
+
+`rawBody` must be the **unparsed** request body. Deduplicate on
+`X-Fraudnetic-Event-Id`, because retries reuse the same id.
 
 ## 7. Integration checklist
 
@@ -125,6 +196,8 @@ Creates or resumes a KYC session.
 - [ ] Redirect or embed using `redirectUrl`
 - [ ] Configure webhook target URL + endpoint secret and/or implement signed pull endpoints
 - [ ] Validate inbound webhook HMAC using the **endpoint secret** (not necessarily the partner API key)
+- [ ] Deduplicate webhook deliveries on `X-Fraudnetic-Event-Id`
+- [ ] Reply `2xx` to webhooks quickly and process asynchronously
 
 ## 8. OpenAPI / Scalar
 

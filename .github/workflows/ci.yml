@@ -1,0 +1,23 @@
+name: Validate OpenAPI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint partner specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Lint OpenAPI documents
+        run: npm run lint
+      - name: Bundle OpenAPI documents
+        run: npm run bundle

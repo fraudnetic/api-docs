@@ -1,0 +1,15 @@
+{
+  "name": "fraudnetic-api-docs",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Partner-facing OpenAPI specs and Scalar reference for Fraudnetic KYC and Fraud Engine Collector.",
+  "scripts": {
+    "lint": "redocly lint",
+    "lint:strict": "redocly lint --format=stylish",
+    "bundle": "redocly bundle products/kyc/openapi.yaml -o dist/kyc.openapi.json && redocly bundle products/fraud-engine/openapi.yaml -o dist/fraud-engine.openapi.json",
+    "preview": "npx --yes serve -l 4000 ."
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.34.6"
+  }
+}

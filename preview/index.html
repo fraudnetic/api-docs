@@ -88,7 +88,9 @@
       </button>
     </div>
     <div id="api-reference"></div>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <!-- Pinned: an unpinned CDN tag would let a future Scalar release change a
+         partner-facing page without any commit here. -->
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.72.2"></script>
     <script>
       const host = document.getElementById("api-reference");
       const tabs = [...document.querySelectorAll(".tabs button")];
@@ -108,6 +110,12 @@
           theme: "default",
           hideModels: false,
           layout: "modern",
+          documentDownloadType: "yaml",
+          // Keep the published page free of Scalar's workspace tooling and of
+          // any third-party call made on a partner's behalf.
+          showDeveloperTools: "never",
+          telemetry: false,
+          mcp: { disabled: true },
         });
       }
 
